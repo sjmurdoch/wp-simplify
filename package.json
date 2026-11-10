@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Simplify HTML into minimal, semantic, accessible markup for WordPress posts.",
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test"
   },
   "devDependencies": {
     "jsdom": "^26.1.0"
