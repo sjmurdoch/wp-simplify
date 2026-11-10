@@ -21,7 +21,9 @@ Everything runs in the browser. Nothing is uploaded.
 
 ## WordPress features
 
-- `<!--more-->` (including custom text), `<!--nextpage-->` and `<!--noteaser-->` are kept and moved to the top level. The tool can also add a more tag after a set number of paragraphs.
+- `<!--more-->` (including custom text), `<!--nextpage-->` and `<!--noteaser-->` are kept and moved to the top level. The tool can also add a more tag after a set number of paragraphs. In classic output `<!--more-->` starts the paragraph that follows it; in block output it is a More block.
+- **Line breaks**: a single newline in the source is wrapping and becomes a space; a blank line is a paragraph break, as in `wpautop`. A `<br>` left over from hard-wrapped text is removed, while short deliberate lines (addresses, verse) and double breaks are kept.
+- **Stable output**: feeding the output back in gives the same output, in every format. `[caption]`, `[video]` and `[audio]` shortcodes are read back, and classic output keeps line breaks as explicit `<br>`. The test suite checks this for every format.
 - **Captions**: `<figure>`/`<figcaption>`, rendered WordPress `.wp-caption` blocks and Word caption paragraphs all become one of:
   - an Image block with a caption (block editor), or
   - a `[caption]` shortcode (classic editor). The tool looks up the image width that `[caption]` needs if the source doesn't give it.

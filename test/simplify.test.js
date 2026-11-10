@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
 import { simplify } from '../site/simplify.js';
+import { SAMPLE } from '../site/sample.js';
 
 const { DOMParser } = new JSDOM('').window;
 const run = (html, opts = {}, env = {}) => simplify(html, opts, { DOMParser, ...env });
@@ -19,13 +20,13 @@ test('b and i become strong and em; Google Docs normal-weight wrapper is removed
   assert.equal(out, '<p><strong>A</strong> <em>b c</em></p>');
 });
 
-test('wpautop mode omits paragraph tags and uses newlines for breaks', () => {
-  assert.equal(classic('<p>One<br>Two</p><p>Three</p>'), 'One\nTwo\n\nThree');
+test('wpautop mode omits paragraph tags but keeps explicit breaks', () => {
+  assert.equal(classic('<p>One<br>Two</p><p>Three</p>'), 'One<br>Two\n\nThree');
 });
 
 test('preserves more and nextpage tags and hoists them out of paragraphs', () => {
   assert.equal(classic('<p>Intro<!--more Keep reading--></p><p>Rest</p><!-- nextpage --><p>Page 2</p><!-- junk -->'),
-    'Intro\n\n<!--more Keep reading-->\n\nRest\n\n<!--nextpage-->\n\nPage 2');
+    'Intro\n\n<!--more Keep reading-->Rest\n\n<!--nextpage-->\n\nPage 2');
 });
 
 test('more tag becomes a more block in the block editor', () => {
@@ -35,7 +36,7 @@ test('more tag becomes a more block in the block editor', () => {
 });
 
 test('inserts a more tag when asked and none exists', () => {
-  assert.equal(classic('<p>a</p><p>b</p>', { moreAfter: 1 }), 'a\n\n<!--more-->\n\nb');
+  assert.equal(classic('<p>a</p><p>b</p>', { moreAfter: 1 }), 'a\n\n<!--more-->b');
 });
 
 test('figure with caption becomes [caption] shortcode', () => {
@@ -131,8 +132,11 @@ test('referenced ids are kept, others dropped', () => {
 });
 
 test('foreign-language spans keep lang; redundant ones go', () => {
-  assert.equal(html('<p lang="en-GB">Say <span lang="fr">bonjour</span> <span lang="en-US">now</span></p>'),
-    '<p>Say <span lang="fr">bonjour</span> now</p>');
+  assert.equal(html('<p lang="en-GB">When you arrive, say <span lang="fr">bonjour</span> <span lang="en-US">to the host</span></p>'),
+    '<p>When you arrive, say <span lang="fr">bonjour</span> to the host</p>');
+  // With the page language known, it is used rather than guessed.
+  assert.equal(html('<html lang="en"><body><p lang="fr">Bonjour tout le monde</p></body></html>'),
+    '<p lang="fr">Bonjour tout le monde</p>');
 });
 
 test('whitespace and non-breaking spaces are tidied, empty paragraphs removed', () => {
@@ -158,6 +162,20 @@ test('line breaks from wrapped text are removed, deliberate ones kept', () => {
   assert.equal(html('<p>Short line that<br>continues</p>', { lineBreaks: 'keep' }), '<p>Short line that<br>continues</p>');
   // Newlines in the source never become breaks.
   assert.equal(classic('<p>one\ntwo</p>'), 'one two');
+});
+
+test('blank lines are paragraph breaks; single newlines are wrapping', () => {
+  assert.equal(html('Loose text that was\nwrapped\n\nSecond para'), '<p>Loose text that was wrapped</p>\n\n<p>Second para</p>');
+  assert.equal(html('<p>One para\n\nTwo para</p>'), '<p>One para</p>\n\n<p>Two para</p>');
+  // A blank line (two breaks) inside a list item is kept even in wrapped text.
+  assert.equal(html('<ul><li>This is a long first paragraph of a list item, long enough.<br><br>Second paragraph.</li></ul>'),
+    '<ul>\n<li>This is a long first paragraph of a list item, long enough.<br><br>Second paragraph.</li>\n</ul>');
+});
+
+test('shortcodes are read back', () => {
+  assert.equal(html('[caption id="attachment_7" align="alignleft" width="300"]<img src="a.jpg" alt="A" class="wp-image-7"> Hello[/caption]', { captions: 'figure' }),
+    '<figure class="alignleft"><img src="a.jpg" alt="A" width="300" class="wp-image-7"><figcaption>Hello</figcaption></figure>');
+  assert.match(run('[video src="https://example.com/v.mp4"]').html, /<!-- wp:video -->/);
 });
 
 test('code is escaped and protected from shortcodes', () => {
@@ -186,3 +204,54 @@ test('scripts, styles and comments are removed', () => {
 test('loose text is wrapped in paragraphs', () => {
   assert.equal(html('Hello <em>world</em><h2>T</h2>tail'), '<p>Hello <em>world</em></p>\n\n<h2>T</h2>\n\n<p>tail</p>');
 });
+
+// ---------------------------------------------------------------------------
+// Fixed point: feeding the output back in must not change it.
+
+const CORPUS = [
+  SAMPLE,
+  '<p>One<br>Two</p><p>Three</p>',
+  '<p>Intro<!--more Keep reading--></p><p>Rest</p><!-- nextpage --><p>Page 2</p>',
+  '<p>a</p><!--more--><!--noteaser--><h2>b</h2>',
+  '<figure class="alignright"><img src="a.jpg" alt="Cat" width="300" height="200" class="wp-image-7"><figcaption>A <em>cat</em></figcaption></figure>',
+  '<figure><a href="big.jpg"><img src="https://example.com/x.jpg" alt="X"></a><figcaption>Cap</figcaption></figure>',
+  '<p><img src="a.jpg" alt="" class="aligncenter" width="10" height="5"></p><p>After</p>',
+  '<h1>A</h1><h3>B</h3><h2>C</h2><h5>D</h5>',
+  '<ul><li><p>One</p><ul><li>Sub</li></ul></li><li><p>Para one is here.</p><p>Para two is here.</p></li></ul>',
+  '<ol start="3"><li>x</li><li>y</li></ol>',
+  '<table><tr><td><b>A</b></td><td><b>B</b></td></tr><tr><td>1</td><td>2<br>Three</td></tr></table>',
+  '<table><caption>Prices</caption><thead><tr><th scope="col">A</th></tr></thead><tbody><tr><td>1</td></tr></tbody></table>',
+  '<p><iframe src="https://www.youtube.com/embed/abc123"></iframe></p><video src="v.mp4"></video><audio src="a.mp3"></audio>',
+  '<p><a href="#n1">1</a></p><h2 id="n1">Notes</h2>',
+  '<p lang="en-GB">Say <span lang="fr">bonjour</span> now</p><p lang="de">Ganz auf Deutsch.</p>',
+  '<p>a&nbsp;b &lt;tag&gt; &amp; [shortcode]</p>',
+  '<pre><code>if [a] &lt; b\n  return;</code></pre><pre>plain\n  text</pre>',
+  '<blockquote><p>Words</p><p>More words</p><cite>Someone</cite></blockquote>',
+  '<dl><dt>Term</dt><dd>Definition</dd></dl><hr><details><summary>More</summary><p>Hidden</p></details>',
+  '<p>This paragraph was copied from an email client that<br>hard-wrapped every line at about seventy characters so<br>that it would fit.</p><p>1 High Street<br>London</p>',
+  '<p>Short line that<br>continues here and keeps on going for quite a long way<br>Next</p>',
+  'Loose text that was\nwrapped in the source\n\nand a second paragraph\nafter a blank line.\n\n<h2>Heading</h2>\nmore loose text',
+  '<ul><li><ul><li><ul><li><em>Nested.</em> Item one</li><li>Item two</li></ul></li></ul></li></ul>',
+  '[caption id="attachment_7" align="alignleft" width="300"]<img src="a.jpg" alt="A" class="wp-image-7"> Hello[/caption]\n\nAfter',
+  'Intro\n\n<!--more-->Rest of the post\n\n[video src="https://example.com/v.mp4"]',
+  '<p>When you arrive, say <span lang="fr">bonjour</span> to the host</p>',
+  '<ul><li>This is a long first paragraph of a list item, long enough.<br><br>Second paragraph.</li></ul>',
+];
+
+const CONFIGS = {
+  blocks: { format: 'blocks' },
+  'classic autop': { format: 'classic', autop: true },
+  'classic html': { format: 'classic', autop: false },
+  'classic figure captions': { format: 'classic', captions: 'figure', keepImageSize: false },
+  'blocks, h3, remove breaks, more after 1': { format: 'blocks', topHeading: 3, lineBreaks: 'remove', moreAfter: 1 },
+};
+
+for (const [name, opts] of Object.entries(CONFIGS)) {
+  test(`output is a fixed point (${name})`, () => {
+    for (const input of CORPUS) {
+      const once = run(input, opts).html;
+      const twice = run(once, opts).html;
+      assert.equal(twice, once, `not stable for input:\n${input}`);
+    }
+  });
+}

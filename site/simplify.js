@@ -42,7 +42,8 @@ const CONTAINER_TAGS = new Set([
   'div', 'section', 'article', 'header', 'footer', 'main', 'aside', 'nav',
   'center', 'form', 'fieldset', 'hgroup', 'search', 'body', 'legend',
 ]);
-const BLOCKISH = new Set([...BLOCK_TAGS, ...CONTAINER_TAGS, 'colgroup', 'col']);
+// x-para marks a blank line in loose text (a paragraph break, as in wpautop).
+const BLOCKISH = new Set([...BLOCK_TAGS, ...CONTAINER_TAGS, 'colgroup', 'col', 'x-para']);
 const PHRASING_BLOCKS = new Set(['p', ...HEADINGS, 'dt', 'caption', 'summary']);
 const INLINE_TAGS = new Set([
   'a', 'strong', 'em', 'cite', 'q', 'abbr', 'dfn', 'kbd', 'samp', 'var', 'sub',
@@ -100,7 +101,7 @@ export function simplify(input, options = {}, env = {}) {
   const opts = { ...DEFAULTS, ...options };
   const Parser = env.DOMParser || globalThis.DOMParser;
   if (!Parser) throw new Error('No DOMParser available');
-  const doc = new Parser().parseFromString(String(input ?? ''), 'text/html');
+  const doc = new Parser().parseFromString(expandShortcodes(String(input ?? '')), 'text/html');
   const ctx = {
     doc, root: doc.body, opts, env,
     warnings: new Set(), counts: new Map(),
@@ -111,6 +112,7 @@ export function simplify(input, options = {}, env = {}) {
 
   // 1. Strip what is never wanted and capture structure that relies on styles/classes.
   cleanComments(ctx);
+  markBlankLines(ctx);
   convertMedia(ctx);
   dropElements(ctx);
   convertWpCaptions(ctx);
@@ -134,6 +136,7 @@ export function simplify(input, options = {}, env = {}) {
   hoistToTop(ctx);
   wrapInlineRuns(ctx.root, ctx);
   ctx.root.querySelectorAll('blockquote').forEach((bq) => wrapInlineRuns(bq, ctx));
+  ctx.root.querySelectorAll('x-para').forEach((x) => x.replaceWith(' '));
   imageParagraphsToFigures(ctx);
   bareUrlsToEmbeds(ctx);
 
@@ -256,6 +259,57 @@ function cleanComments(ctx) {
     else if (/^noteaser$/i.test(d)) c.data = 'noteaser';
     else c.remove();
   }
+}
+
+/**
+ * A blank line in loose text is a paragraph break (as wpautop treats it);
+ * a single newline is just wrapping and becomes a space later.
+ */
+function markBlankLines(ctx) {
+  const { root, doc } = ctx;
+  const walker = doc.createTreeWalker(root, 4 /* SHOW_TEXT */);
+  const nodes = [];
+  while (walker.nextNode()) {
+    const t = walker.currentNode;
+    const p = t.parentElement;
+    if (!/\n[ \t\r ]*\n/.test(t.data)) continue;
+    if (p === root || CONTAINER_TAGS.has(p.localName) || p.localName === 'blockquote' || p.localName === 'p') nodes.push(t);
+  }
+  for (const t of nodes) {
+    const parts = t.data.split(/\n[ \t\r ]*\n\s*/);
+    const frag = doc.createDocumentFragment();
+    parts.forEach((part, i) => {
+      if (i) frag.append(doc.createElement('x-para'));
+      if (part) frag.append(part);
+    });
+    t.replaceWith(frag);
+  }
+}
+
+/** Turn [caption], [video] and [audio] shortcodes back into HTML so output can be re-read. */
+function expandShortcodes(html) {
+  const attrsOf = (s) => {
+    const a = {};
+    s.replace(/(\w+)\s*=\s*(?:"([^"]*)"|'([^']*)'|(\S+))/g, (_, k, v1, v2, v3) => { a[k.toLowerCase()] = v1 ?? v2 ?? v3; });
+    return a;
+  };
+  return html
+    .replace(/\[caption\b([^\]]*)\]([\s\S]*?)\[\/caption\]/gi, (m, attrs, body) => {
+      const a = attrsOf(attrs);
+      const mm = /^\s*((?:<a\b[^>]*>\s*)?<img\b[^>]*>(?:\s*<\/a>)?)([\s\S]*)$/i.exec(body);
+      if (!mm) return m;
+      let media = mm[1];
+      const width = parseInt(a.width, 10);
+      if (width > 0 && !/<img\b[^>]*\swidth\s*=/i.test(media)) media = media.replace(/<img\b/i, `<img width="${width}"`);
+      const cap = (a.caption ?? mm[2]).trim();
+      const align = /^align(left|right|center|none)$/.test(a.align || '') ? ` class="${a.align}"` : '';
+      return `<figure${align}>${media}${cap ? `<figcaption>${cap}</figcaption>` : ''}</figure>`;
+    })
+    .replace(/\[(video|audio)\b([^\]]*)\](?:\s*\[\/\1\])?/gi, (m, tag, attrs) => {
+      const a = attrsOf(attrs);
+      const src = a.src || a.mp4 || a.webm || a.mp3 || a.m4a || a.ogg || a.wav;
+      return src ? `<${tag} controls src="${src.replace(/"/g, '&quot;')}"></${tag}>` : m;
+    });
 }
 
 function embedUrlFromIframe(src) {
@@ -478,10 +532,14 @@ function cleanLangDir(ctx) {
   const { root, doc } = ctx;
   let docLang = doc.documentElement.getAttribute('lang') || root.getAttribute('lang') || '';
   if (!docLang) {
+    // Guess from the text, counting unlabelled text as its own bucket so that
+    // output without the page language (already stripped) keeps its labels.
     const weight = new Map();
-    for (const el of all(root, '[lang]')) {
-      const l = primaryLang(el.getAttribute('lang'));
-      weight.set(l, (weight.get(l) || 0) + el.textContent.length);
+    const walker = doc.createTreeWalker(root, 4 /* SHOW_TEXT */);
+    while (walker.nextNode()) {
+      const t = walker.currentNode;
+      const l = primaryLang(t.parentElement?.closest('[lang]')?.getAttribute('lang'));
+      weight.set(l, (weight.get(l) || 0) + t.data.trim().length);
     }
     docLang = [...weight.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || '';
   }
@@ -494,7 +552,7 @@ function cleanLangDir(ctx) {
       let d = dir;
       if (child.hasAttribute('lang')) {
         const own = child.getAttribute('lang').trim();
-        if (!own || primaryLang(own) === primaryLang(lang)) child.removeAttribute('lang');
+        if (!own || (lang && primaryLang(own) === primaryLang(lang))) child.removeAttribute('lang');
         else { l = own; child.setAttribute('lang', own); }
       }
       if (child.hasAttribute('xml:lang')) child.removeAttribute('xml:lang');
@@ -542,7 +600,7 @@ function wrapInlineRuns(container, ctx) {
 
 function unwrapUnknown(ctx) {
   const { root, opts } = ctx;
-  const allowed = new Set([...BLOCK_TAGS, ...INLINE_TAGS]);
+  const allowed = new Set([...BLOCK_TAGS, ...INLINE_TAGS, 'x-para']);
   if (!opts.semanticEmphasis) { allowed.add('b'); allowed.add('i'); }
   for (const el of all(root).reverse()) {
     if (!el.isConnected) continue;
@@ -737,6 +795,10 @@ function removeRedundantNesting(ctx) {
 }
 
 function splitParagraphsOnDoubleBr(ctx) {
+  // A blank line inside a paragraph is a paragraph break too.
+  for (const x of all(ctx.root, 'p > x-para')) {
+    x.replaceWith(ctx.doc.createElement('br'), ctx.doc.createElement('br'));
+  }
   for (const p of all(ctx.root, 'p')) {
     let current = p;
     let node = current.firstChild;
@@ -777,10 +839,24 @@ const WRAP_LINE_LENGTH = 45;
 function removeWrapBreaks(ctx) {
   const mode = ctx.opts.lineBreaks;
   if (mode === 'keep') return;
-  const text = (nodes) => nodes.map((n) => n.textContent).join('').replace(/[\s ]+/g, ' ').trim();
   for (const block of all(ctx.root, 'p, li, dd, dt, td, th, figcaption, caption')) {
+    // Repeat until stable: joining lines changes their lengths, and the
+    // result must not change if it is simplified again.
+    while (removeWrapBreaksOnce(block, mode, ctx));
+  }
+}
+
+function removeWrapBreaksOnce(block, mode, ctx) {
+  const text = (nodes) => nodes.map((n) => n.textContent).join('').replace(/[\s ]+/g, ' ').trim();
+  const sibling = (n, dir) => {
+    let s = n[dir];
+    while (s && s.nodeType === 3 && isBlankText(s)) s = s[dir];
+    return s;
+  };
+  let changed = false;
+  {
     const brs = Array.from(block.children).filter((c) => isEl(c, 'br'));
-    if (!brs.length) continue;
+    if (!brs.length) return false;
     // Split the block's direct children into lines at each <br>.
     const lines = [[]];
     for (const n of Array.from(block.childNodes)) {
@@ -795,8 +871,12 @@ function removeWrapBreaks(ctx) {
     brs.forEach((br, i) => {
       const before = lineText[i];
       const after = lineText[i + 1];
+      // Two breaks in a row are a blank line: always deliberate.
+      if (isEl(sibling(br, 'previousSibling'), 'br') || isEl(sibling(br, 'nextSibling'), 'br')) return;
+      if (!before || !after) return;
       const continues = /^[a-z]/.test(after) && !/[.!?:;]$/.test(before);
       if (!wrapped && !continues) return;
+      changed = true;
       // A hyphen at the break joins without a space ("well-<br>known").
       // The hyphen stays: it can't be told apart from a compound word.
       const prev = br.previousSibling;
@@ -809,6 +889,7 @@ function removeWrapBreaks(ctx) {
       ctx.count('wrapBreaks');
     });
   }
+  return changed;
 }
 
 /** WordPress needs more/nextpage tags, embeds and media at the top level. */
@@ -1278,7 +1359,8 @@ function richContent(el, f, nestedLists = []) {
     else run += inl(c, f);
   }
   if (run.trim()) parts.push(run.trim());
-  return parts.join('<br>');
+  // Separate paragraphs with a blank line (two breaks) so they stay apart.
+  return parts.join('<br><br>');
 }
 
 function listBlock(list, f) {
@@ -1400,7 +1482,8 @@ function nextNonBlank(node) {
 function toClassic(node, f) {
   if (node.nodeType === 8) return `<!--${node.data}-->`;
   if (!isEl(node)) return '';
-  if (isEl(node, 'p') && f.autop && !node.attributes.length) return inlKids(node, f, '\n');
+  // Breaks stay as <br>: a bare newline would read back as wrapping.
+  if (isEl(node, 'p') && f.autop && !node.attributes.length) return inlKids(node, f);
   if (f.mode === 'preview' && node.nodeType === 1 && node.localName === 'figure') return figureHtml(node, f);
   return htmlBlock(node, f);
 }
@@ -1416,5 +1499,19 @@ function toPreview(node, f) {
 
 function serialiseTop(root, f) {
   const fn = f.mode === 'blocks' ? toBlock : f.mode === 'preview' ? toPreview : toClassic;
-  return Array.from(root.childNodes).map((n) => fn(n, f)).filter((s) => s && s.trim()).join('\n\n');
+  const out = [];
+  let pendingMore = '';
+  for (const n of Array.from(root.childNodes)) {
+    // Classic editor: the more tag starts the paragraph that follows it.
+    if (f.mode === 'classic' && n.nodeType === 8 && /^more\b/.test(n.data)) {
+      pendingMore += `<!--${n.data}-->`;
+      continue;
+    }
+    const s = fn(n, f);
+    if (!s || !s.trim()) continue;
+    out.push(pendingMore + s);
+    pendingMore = '';
+  }
+  if (pendingMore) out.push(pendingMore);
+  return out.join('\n\n');
 }
