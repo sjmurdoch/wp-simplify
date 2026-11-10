@@ -1,0 +1,12 @@
+{
+  "name": "wp-simplify",
+  "private": true,
+  "type": "module",
+  "description": "Simplify HTML into minimal, semantic, accessible markup for WordPress posts.",
+  "scripts": {
+    "test": "node --test test/"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
+  }
+}
