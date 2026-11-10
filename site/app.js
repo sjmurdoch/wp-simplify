@@ -32,6 +32,7 @@ function readOptions() {
     topHeading: +el.topHeading.value,
     fixHeadingSkips: el.fixHeadingSkips.checked,
     semanticEmphasis: el.semanticEmphasis.checked,
+    lineBreaks: el.lineBreaks.value,
     moreAfter: Math.max(0, +el.moreAfter.value || 0),
   };
 }

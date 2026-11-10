@@ -20,7 +20,7 @@ test('b and i become strong and em; Google Docs normal-weight wrapper is removed
 });
 
 test('wpautop mode omits paragraph tags and uses newlines for breaks', () => {
-  assert.equal(classic('<p>One<br>two</p><p>Three</p>'), 'One\ntwo\n\nThree');
+  assert.equal(classic('<p>One<br>Two</p><p>Three</p>'), 'One\nTwo\n\nThree');
 });
 
 test('preserves more and nextpage tags and hoists them out of paragraphs', () => {
@@ -141,6 +141,23 @@ test('whitespace and non-breaking spaces are tidied, empty paragraphs removed', 
 
 test('double line breaks split paragraphs', () => {
   assert.equal(classic('<p>a<br><br>b</p>'), 'a\n\nb');
+});
+
+test('line breaks from wrapped text are removed, deliberate ones kept', () => {
+  const wrapped = '<p>This paragraph was copied from an email client that<br>\nhard-wrapped every line at about seventy characters so<br>\nthat it would fit, and each wrap became a line break.</p>';
+  assert.equal(html(wrapped), '<p>This paragraph was copied from an email client that hard-wrapped every line at about seventy characters so that it would fit, and each wrap became a line break.</p>');
+  // Short lines (an address) are kept.
+  const address = '<p>1 High Street<br>London<br>SW1A 1AA</p>';
+  assert.equal(html(address), '<p>1 High Street<br>London<br>SW1A 1AA</p>');
+  // A lower-case continuation is a wrap even in a short paragraph.
+  assert.equal(html('<p>Short line that<br>continues here</p>'), '<p>Short line that continues here</p>');
+  // A hyphen at the break joins without a space.
+  assert.equal(html('<p>A well-<br>known fact</p>'), '<p>A well-known fact</p>');
+  // Modes.
+  assert.equal(html(address, { lineBreaks: 'remove' }), '<p>1 High Street London SW1A 1AA</p>');
+  assert.equal(html('<p>Short line that<br>continues</p>', { lineBreaks: 'keep' }), '<p>Short line that<br>continues</p>');
+  // Newlines in the source never become breaks.
+  assert.equal(classic('<p>one\ntwo</p>'), 'one two');
 });
 
 test('code is escaped and protected from shortcodes', () => {

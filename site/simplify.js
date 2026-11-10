@@ -23,6 +23,11 @@ export const DEFAULTS = Object.freeze({
   keepImageSize: true,
   /** Insert <!--more--> after this many paragraphs if there isn't one (0 = off). */
   moreAfter: 0,
+  /**
+   * Line breaks inside paragraphs: 'auto' removes those that look like
+   * hard-wrapped text, 'remove' removes all, 'keep' leaves them.
+   */
+  lineBreaks: 'auto',
   /** Keep id attributes that in-page links point at. */
   keepIds: true,
 });
@@ -125,6 +130,7 @@ export function simplify(input, options = {}, env = {}) {
   normaliseFigures(ctx);
   removeRedundantNesting(ctx);
   splitParagraphsOnDoubleBr(ctx);
+  removeWrapBreaks(ctx);
   hoistToTop(ctx);
   wrapInlineRuns(ctx.root, ctx);
   ctx.root.querySelectorAll('blockquote').forEach((bq) => wrapInlineRuns(bq, ctx));
@@ -760,6 +766,51 @@ function splitParagraphsOnDoubleBr(ctx) {
   }
 }
 
+/**
+ * Text copied from email, PDFs or plain-text sources often has a <br> at every
+ * wrap point. In 'auto' mode a break is treated as a wrap artefact when the
+ * block's lines are prose-length (an address or poem has short lines), or when
+ * the next line carries on mid-sentence in lower case.
+ */
+const WRAP_LINE_LENGTH = 45;
+
+function removeWrapBreaks(ctx) {
+  const mode = ctx.opts.lineBreaks;
+  if (mode === 'keep') return;
+  const text = (nodes) => nodes.map((n) => n.textContent).join('').replace(/[\s ]+/g, ' ').trim();
+  for (const block of all(ctx.root, 'p, li, dd, dt, td, th, figcaption, caption')) {
+    const brs = Array.from(block.children).filter((c) => isEl(c, 'br'));
+    if (!brs.length) continue;
+    // Split the block's direct children into lines at each <br>.
+    const lines = [[]];
+    for (const n of Array.from(block.childNodes)) {
+      if (isEl(n, 'br')) lines.push([]);
+      else lines.at(-1).push(n);
+    }
+    const lineText = lines.map(text);
+    const full = lineText.slice(0, -1).filter(Boolean);
+    const lengths = full.map((t) => t.length).sort((a, b) => a - b);
+    const median = lengths.length ? lengths[Math.floor(lengths.length / 2)] : 0;
+    const wrapped = mode === 'remove' || median >= WRAP_LINE_LENGTH;
+    brs.forEach((br, i) => {
+      const before = lineText[i];
+      const after = lineText[i + 1];
+      const continues = /^[a-z]/.test(after) && !/[.!?:;]$/.test(before);
+      if (!wrapped && !continues) return;
+      // A hyphen at the break joins without a space ("well-<br>known").
+      // The hyphen stays: it can't be told apart from a compound word.
+      const prev = br.previousSibling;
+      if (prev?.nodeType === 3 && /[a-z]-$/i.test(prev.data.trimEnd()) && /^[a-z]/i.test(after)) {
+        prev.data = prev.data.trimEnd();
+        const next = br.nextSibling;
+        if (next?.nodeType === 3) next.data = next.data.replace(/^[\s ]+/, '');
+        br.remove();
+      } else br.replaceWith(ctx.doc.createTextNode(' '));
+      ctx.count('wrapBreaks');
+    });
+  }
+}
+
 /** WordPress needs more/nextpage tags, embeds and media at the top level. */
 function hoistToTop(ctx) {
   const { root, doc } = ctx;
@@ -1041,6 +1092,7 @@ function describeCounts(counts) {
     underline: () => 'Removed underlining, which readers confuse with links.',
     layoutTables: (n) => `Unwrapped ${n} single-cell layout table${n > 1 ? 's' : ''}.`,
     headerRows: (n) => `Marked ${n} bold first row${n > 1 ? 's' : ''} as table headers.`,
+    wrapBreaks: (n) => `Removed ${n} line break${n > 1 ? 's' : ''} left over from wrapped text.`,
     nestedLists: (n) => `Removed ${n} empty list level${n > 1 ? 's' : ''} that only wrapped another list.`,
     splitParagraphs: (n) => `Split ${n} double line break${n > 1 ? 's' : ''} into paragraphs.`,
     wordCaptions: (n) => `Attached ${n} caption${n > 1 ? 's' : ''} to ${n > 1 ? 'their images' : 'its image'}.`,

@@ -42,6 +42,13 @@
         </select>
       </label>
       <label><input type="checkbox" name="fixHeadingSkips" checked> Don’t skip heading levels</label>
+      <label>Line breaks inside paragraphs
+        <select name="lineBreaks">
+          <option value="auto">Remove if from wrapped text</option>
+          <option value="remove">Remove all</option>
+          <option value="keep">Keep all</option>
+        </select>
+      </label>
       <label><input type="checkbox" name="semanticEmphasis" checked> &lt;b&gt;/&lt;i&gt; become &lt;strong&gt;/&lt;em&gt;</label>
       <label>Add a “more” tag after
         <input type="number" name="moreAfter" min="0" max="50" value="0" inputmode="numeric"> paragraphs (0 = off)
