@@ -32,7 +32,7 @@ Everything runs in the browser. Nothing is uploaded.
 - `[` inside code is escaped so WordPress won't run it as a shortcode.
 - **Two output formats**:
   - **Block editor**: valid block markup for paragraphs, headings, lists, quotes, images, tables, code, separators, embeds and more. Anything else goes in a Custom HTML block.
-  - **Classic editor**: plain HTML. You can optionally leave out `<p>`/`<br>` and let `wpautop` add them.
+  - **Classic editor**: plain HTML. You can optionally leave out `<p>` and let `wpautop` add it; line breaks are always explicit `<br>`.
 
 ## Development
 

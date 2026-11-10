@@ -9,7 +9,7 @@
 export const DEFAULTS = Object.freeze({
   /** 'blocks' (block editor / Gutenberg) or 'classic' (classic editor). */
   format: 'blocks',
-  /** Classic only: omit <p> and <br> and let wpautop add them. */
+  /** Classic only: omit <p> and let wpautop add it (line breaks stay as <br>). */
   autop: true,
   /** Classic only: 'shortcode' ([caption]) or 'figure' (<figure>/<figcaption>). */
   captions: 'shortcode',
