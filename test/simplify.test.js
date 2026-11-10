@@ -81,6 +81,16 @@ test('Word lists become nested real lists', () => {
   assert.equal(html(word), '<ol>\n<li>One\n<ul>\n<li>Sub</li>\n</ul></li>\n<li>Two</li>\n</ol>');
 });
 
+test('spurious nested lists are collapsed', () => {
+  assert.equal(html('<ul><li><ul><li><ul><li><em>A.</em> one</li><li>two</li></ul></li></ul></li></ul>'),
+    '<ul>\n<li><em>A.</em> one</li>\n<li>two</li>\n</ul>');
+  // An item that is only an indented list moves under the previous item.
+  assert.equal(html('<ul><li>a</li><li><ul><li>b</li></ul></li><li>c</li></ul>'),
+    '<ul>\n<li>a\n<ul>\n<li>b</li>\n</ul></li>\n<li>c</li>\n</ul>');
+  // A leading indented list is lifted up a level.
+  assert.equal(html('<ol><li><ol><li>a</li></ol></li><li>b</li></ol>'), '<ol>\n<li>a</li>\n<li>b</li>\n</ol>');
+});
+
 test('list block markup with nested list', () => {
   const out = run('<ul><li><p>One</p><ul><li>Sub</li></ul></li></ul>').html;
   assert.equal(out, [

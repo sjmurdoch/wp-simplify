@@ -141,6 +141,7 @@ export function simplify(input, options = {}, env = {}) {
     removeEmpty(ctx);
   }
   unwrapSingleParagraphs(ctx);
+  collapseNestedLists(ctx);
   fixHeadings(ctx);
   insertMore(ctx);
   checkAccessibility(ctx);
@@ -920,6 +921,41 @@ function unwrapSingleParagraphs(ctx) {
   }
 }
 
+/**
+ * A list item holding nothing but another list is spurious indentation
+ * (common when pasting from editors): it renders as an empty bullet.
+ */
+function collapseNestedLists(ctx) {
+  const isList = (n) => isEl(n, 'ul') || isEl(n, 'ol');
+  for (const li of all(ctx.root, 'li').reverse()) {
+    if (!li.isConnected) continue;
+    const kids = meaningfulChildren(li);
+    if (kids.length !== 1 || !isList(kids[0])) continue;
+    const inner = kids[0];
+    const outer = li.parentElement;
+    if (!isList(outer)) continue;
+    const siblings = Array.from(outer.children).filter((c) => isEl(c, 'li'));
+    const prev = li.previousElementSibling;
+    if (siblings.length === 1) {
+      // The whole outer list is just a wrapper.
+      for (const a of ['lang', 'dir']) if (outer.hasAttribute(a) && !inner.hasAttribute(a)) inner.setAttribute(a, outer.getAttribute(a));
+      outer.replaceWith(inner);
+    } else if (isEl(prev, 'li')) {
+      // Indented items belong under the previous item.
+      const last = prev.lastElementChild;
+      if (isList(last) && last.localName === inner.localName) {
+        while (inner.firstChild) last.append(inner.firstChild);
+      } else prev.append(inner);
+      li.remove();
+    } else {
+      // First item is only an indented list: lift its items up a level.
+      while (inner.firstChild) li.before(inner.firstChild);
+      li.remove();
+    }
+    ctx.count('nestedLists');
+  }
+}
+
 function fixHeadings(ctx) {
   const { root, opts } = ctx;
   const hs = all(root, HEADINGS.join(','));
@@ -1005,6 +1041,7 @@ function describeCounts(counts) {
     underline: () => 'Removed underlining, which readers confuse with links.',
     layoutTables: (n) => `Unwrapped ${n} single-cell layout table${n > 1 ? 's' : ''}.`,
     headerRows: (n) => `Marked ${n} bold first row${n > 1 ? 's' : ''} as table headers.`,
+    nestedLists: (n) => `Removed ${n} empty list level${n > 1 ? 's' : ''} that only wrapped another list.`,
     splitParagraphs: (n) => `Split ${n} double line break${n > 1 ? 's' : ''} into paragraphs.`,
     wordCaptions: (n) => `Attached ${n} caption${n > 1 ? 's' : ''} to ${n > 1 ? 'their images' : 'its image'}.`,
     headingsDemoted: (n) => `Moved headings down ${n} level${n > 1 ? 's' : ''} (the post title is the page’s main heading).`,
